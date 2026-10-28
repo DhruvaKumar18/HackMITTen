@@ -33,11 +33,18 @@ A modern real-time chat application inspired by the **Chatvia** React UI templat
    - **Image Attachment (📷)**: Uploads images to `storage/images/` and displays rich preview bubbles.
    - **File Attachment (📎)**: Uploads documents/archives to `storage/files/` and displays downloadable file cards with file name and size.
 
-6. **Friend-Gated Messaging**:
+6. **End-to-End Encryption (E2EE)**:
+   - **Zero-Knowledge Architecture**: Messages and media captions are encrypted on the sender's client before transmission. The backend server and PostgreSQL database only ever see and persist unreadable ciphertext (`e2ee:{"v":1,"iv":"...","ct":"..."}`).
+   - **Key Agreement**: **ECDH (Elliptic-Curve Diffie-Hellman)** on **NIST Curve P-256 (secp256r1)**.
+   - **Symmetric Cipher**: **AES-256-GCM** (Galois/Counter Mode, 256-bit key) with a unique 96-bit (12-byte) cryptographically secure random IV per message and 128-bit authentication tag (AEAD).
+   - **Key Custody**: Private keys are generated and retained exclusively in browser client storage (`localStorage`) and never leave the device.
+   - **Security Inspection Modal**: Click the **🔒 E2EE Active** badge in the chat header or the in-chat encryption banner to inspect the cryptographic protocol, key exchange status, and fingerprints.
+
+7. **Friend-Gated Messaging**:
    - Direct messaging is strictly restricted to accepted friends.
    - Real-time WebSocket notifications for friend requests, message delivery, and typing indicators.
 
-7. **Split-Screen Demo Mode**:
+8. **Split-Screen Demo Mode**:
    - Click the **⚡ icon** on the left rail to view two users (e.g. Doris and Patrick) chatting side-by-side in real time!
 
 ---

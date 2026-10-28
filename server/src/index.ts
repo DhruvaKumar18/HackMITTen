@@ -132,9 +132,9 @@ app.get("/api/health", (_req, res) => {
   res.json({ status: "ok", db: "PostgreSQL", timestamp: new Date().toISOString() });
 });
 
-// 1. Register: requires username, email (Gmail ID), password
+// 1. Register: requires username, email (Gmail ID), password, optional publicKey
 app.post("/api/auth/register", async (req, res) => {
-  const { username, email, password, fullName, avatar, bio } = req.body;
+  const { username, email, password, fullName, avatar, bio, publicKey } = req.body;
   if (!username || !email || !password) {
     return res.status(400).json({ error: "Username, Gmail ID (email), and password are required." });
   }
@@ -159,12 +159,13 @@ app.post("/api/auth/register", async (req, res) => {
     const userAvatar =
       avatar || `https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(cleanUsername)}`;
     const userBio = bio?.trim() || "Hey there! I am using Chatvia.";
+    const userPubKey = publicKey || null;
 
     const insertRes = await pool.query(
-      `INSERT INTO users (id, user_id_code, username, email, full_name, password_hash, avatar, bio)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-       RETURNING id, user_id_code AS "userIdCode", username, email, full_name AS "fullName", avatar, bio`,
-      [newId, userIdCode, cleanUsername, cleanEmail, name, pHash, userAvatar, userBio]
+      `INSERT INTO users (id, user_id_code, username, email, full_name, password_hash, avatar, bio, public_key)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       RETURNING id, user_id_code AS "userIdCode", username, email, full_name AS "fullName", avatar, bio, public_key AS "publicKey"`,
+      [newId, userIdCode, cleanUsername, cleanEmail, name, pHash, userAvatar, userBio, userPubKey]
     );
 
     const user = insertRes.rows[0];
@@ -177,6 +178,7 @@ app.post("/api/auth/register", async (req, res) => {
         username: user.username,
         fullName: user.fullName,
         avatar: user.avatar,
+        publicKey: user.publicKey,
       },
     });
 
@@ -195,7 +197,7 @@ app.post("/api/auth/login", async (req, res) => {
   }
 
   try {
-    let query = `SELECT id, user_id_code AS "userIdCode", username, email, full_name AS "fullName", password_hash, avatar, bio FROM users WHERE `;
+    let query = `SELECT id, user_id_code AS "userIdCode", username, email, full_name AS "fullName", password_hash, avatar, bio, public_key AS "publicKey" FROM users WHERE `;
     const params: any[] = [];
 
     if (username && email) {
@@ -231,7 +233,7 @@ app.post("/api/auth/login", async (req, res) => {
 app.get("/api/users/profile/:id", async (req, res) => {
   try {
     const userRes = await pool.query(
-      `SELECT id, user_id_code AS "userIdCode", username, email, full_name AS "fullName", avatar, bio, created_at AS "createdAt"
+      `SELECT id, user_id_code AS "userIdCode", username, email, full_name AS "fullName", avatar, bio, public_key AS "publicKey", created_at AS "createdAt"
        FROM users WHERE id = $1`,
       [req.params.id]
     );
@@ -285,7 +287,7 @@ app.get("/api/users/lookup", async (req, res) => {
 
   try {
     const result = await pool.query(
-      `SELECT id, user_id_code AS "userIdCode", username, full_name AS "fullName", avatar, bio 
+      `SELECT id, user_id_code AS "userIdCode", username, full_name AS "fullName", avatar, bio, public_key AS "publicKey" 
        FROM users 
        WHERE UPPER(user_id_code) = $1 OR UPPER(username) = $1`,
       [cleanCode]
@@ -327,6 +329,34 @@ app.get("/api/users/lookup", async (req, res) => {
     });
   } catch (err) {
     res.status(500).json({ error: "Error looking up user." });
+  }
+});
+
+// 5b. Update / Register E2EE Public Key
+app.post("/api/users/keys", async (req, res) => {
+  const { userId, publicKey } = req.body;
+  if (!userId || !publicKey) {
+    return res.status(400).json({ error: "userId and publicKey are required." });
+  }
+
+  try {
+    await pool.query(`UPDATE users SET public_key = $1 WHERE id = $2`, [publicKey, userId]);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to store public key." });
+  }
+});
+
+// 5c. Retrieve E2EE Public Key for User
+app.get("/api/users/:id/key", async (req, res) => {
+  try {
+    const r = await pool.query(`SELECT public_key AS "publicKey" FROM users WHERE id = $1`, [req.params.id]);
+    if (r.rows.length === 0) {
+      return res.status(404).json({ error: "User not found." });
+    }
+    res.json({ publicKey: r.rows[0].publicKey });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to fetch user public key." });
   }
 });
 
@@ -484,7 +514,7 @@ app.get("/api/friends", async (req, res) => {
     // 1. Accepted Friends with last message
     const friendsRes = await pool.query(
       `SELECT u.id, u.user_id_code AS "userIdCode", u.username, u.email, u.full_name AS "fullName",
-              u.avatar, u.bio
+              u.avatar, u.bio, u.public_key AS "publicKey"
        FROM users u
        JOIN friend_requests fr 
          ON fr.status = 'accepted' 
@@ -508,6 +538,7 @@ app.get("/api/friends", async (req, res) => {
         if (lastMsg) {
           if (lastMsg.messageType === "image") preview = "📷 Photo";
           else if (lastMsg.messageType === "file") preview = `📄 ${lastMsg.fileName || "File"}`;
+          else if (lastMsg.content && lastMsg.content.startsWith("e2ee:")) preview = "🔒 Encrypted Message";
           else preview = lastMsg.content;
         }
 
@@ -778,4 +809,4 @@ initDatabase()
   })
   .catch((err) => {
     console.error("FATAL: Failed to initialize PostgreSQL database:", err);
-  });
+  }); 
