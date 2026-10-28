@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import './App.css';
 
 interface User {
@@ -175,96 +175,145 @@ function ChatViewPanel({
     loadFriendsData();
   }, [currentUser.id]);
 
+  // Active contact ref to avoid stale closures in WS handler
+  const activeContactRef = useRef<User | null>(activeContact);
+  useEffect(() => {
+    activeContactRef.current = activeContact;
+  }, [activeContact]);
+
   // Load conversation messages
+  const fetchMessages = useCallback(async () => {
+    const contact = activeContactRef.current;
+    if (!contact) return;
+    try {
+      const res = await fetch(`/api/messages?user1=${currentUser.id}&user2=${contact.id}`);
+      const data = await res.json();
+      if (res.ok && data.allowed) {
+        setMessages(data.messages || []);
+        setMessageAllowed(true);
+      } else {
+        setMessages([]);
+        setMessageAllowed(false);
+      }
+    } catch (err) {
+      console.error('Failed to fetch messages:', err);
+    }
+  }, [currentUser.id]);
+
   useEffect(() => {
     if (!activeContact) {
       setMessages([]);
       return;
     }
-
-    const fetchMessages = async () => {
-      try {
-        const res = await fetch(`/api/messages?user1=${currentUser.id}&user2=${activeContact.id}`);
-        const data = await res.json();
-        if (res.ok && data.allowed) {
-          setMessages(data.messages || []);
-          setMessageAllowed(true);
-        } else {
-          setMessages([]);
-          setMessageAllowed(false);
-        }
-      } catch (err) {
-        console.error('Failed to fetch messages:', err);
-      }
-    };
-
     fetchMessages();
     setOtherIsTyping(false);
-  }, [activeContact?.id, currentUser.id]);
+  }, [activeContact?.id, fetchMessages]);
 
-  // WebSocket lifecycle
+  // Periodic background sync for active chat (guarantees delivery even under WS reconnects)
   useEffect(() => {
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const host = window.location.host;
-    const wsUrl = `${protocol}//${host}/ws?userId=${encodeURIComponent(currentUser.id)}`;
+    if (!activeContact?.id) return;
 
-    const ws = new WebSocket(wsUrl);
-    wsRef.current = ws;
+    const interval = setInterval(() => {
+      fetchMessages();
+    }, 2000);
 
-    ws.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
+    return () => clearInterval(interval);
+  }, [activeContact?.id, fetchMessages]);
 
-        if (data.type === 'new_message') {
-          const msg: Message = data.message;
-          if (
-            (msg.senderId === activeContact?.id && msg.receiverId === currentUser.id) ||
-            (msg.senderId === currentUser.id && msg.receiverId === activeContact?.id)
-          ) {
-            setMessages((prev) => [...prev, msg]);
-            if (msg.senderId === activeContact?.id) {
-              playChime();
-            }
-          }
+  // WebSocket lifecycle with auto-reconnection and robust message receipt
+  useEffect(() => {
+    let ws: WebSocket | null = null;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    let isDisposed = false;
 
-          setFriends((prev) =>
-            prev.map((f) => {
-              if (f.id === msg.senderId || f.id === msg.receiverId) {
-                let preview = msg.content;
-                if (msg.messageType === 'image') preview = '📷 Photo';
-                else if (msg.messageType === 'file') preview = `📄 ${msg.fileName || 'File'}`;
-                return { ...f, lastMessage: preview, lastMessageTime: msg.timestamp };
+    const connect = () => {
+      if (isDisposed) return;
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const host = window.location.host;
+      const wsUrl = `${protocol}//${host}/ws?userId=${encodeURIComponent(currentUser.id)}`;
+
+      ws = new WebSocket(wsUrl);
+      wsRef.current = ws;
+
+      ws.onopen = () => {
+        // Sync active conversation when connected or reconnected
+        fetchMessages();
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+
+          if (data.type === 'new_message') {
+            const msg: Message = data.message;
+            const currentContact = activeContactRef.current;
+            if (
+              currentContact &&
+              ((msg.senderId === currentContact.id && msg.receiverId === currentUser.id) ||
+                (msg.senderId === currentUser.id && msg.receiverId === currentContact.id))
+            ) {
+              setMessages((prev) => {
+                if (prev.some((m) => m.id === msg.id)) return prev;
+                return [...prev, msg];
+              });
+              if (msg.senderId === currentContact.id) {
+                playChime();
               }
-              return f;
-            })
-          );
-        } else if (data.type === 'user_status') {
-          setFriends((prev) =>
-            prev.map((f) => (f.id === data.userId ? { ...f, online: data.online } : f))
-          );
-          if (activeContact?.id === data.userId) {
-            setActiveContact((prev) => (prev ? { ...prev, online: data.online } : null));
+            }
+
+            setFriends((prev) =>
+              prev.map((f) => {
+                if (f.id === msg.senderId || f.id === msg.receiverId) {
+                  let preview = msg.content;
+                  if (msg.messageType === 'image') preview = '📷 Photo';
+                  else if (msg.messageType === 'file') preview = `📄 ${msg.fileName || 'File'}`;
+                  return { ...f, lastMessage: preview, lastMessageTime: msg.timestamp };
+                }
+                return f;
+              })
+            );
+          } else if (data.type === 'user_status') {
+            setFriends((prev) =>
+              prev.map((f) => (f.id === data.userId ? { ...f, online: data.online } : f))
+            );
+            if (activeContactRef.current?.id === data.userId) {
+              setActiveContact((prev) => (prev ? { ...prev, online: data.online } : null));
+            }
+          } else if (data.type === 'typing_indicator') {
+            if (data.senderId === activeContactRef.current?.id) {
+              setOtherIsTyping(data.isTyping);
+            }
+          } else if (data.type === 'friend_request_received') {
+            playChime();
+            loadFriendsData();
+          } else if (data.type === 'friend_request_accepted') {
+            playChime();
+            loadFriendsData();
           }
-        } else if (data.type === 'typing_indicator') {
-          if (data.senderId === activeContact?.id) {
-            setOtherIsTyping(data.isTyping);
-          }
-        } else if (data.type === 'friend_request_received') {
-          playChime();
-          loadFriendsData();
-        } else if (data.type === 'friend_request_accepted') {
-          playChime();
-          loadFriendsData();
+        } catch (err) {
+          console.error('WS error:', err);
         }
-      } catch (err) {
-        console.error('WS error:', err);
-      }
+      };
+
+      ws.onclose = () => {
+        if (!isDisposed) {
+          reconnectTimer = setTimeout(connect, 1500);
+        }
+      };
+
+      ws.onerror = () => {
+        ws?.close();
+      };
     };
+
+    connect();
 
     return () => {
-      ws.close();
+      isDisposed = true;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      if (ws) ws.close();
     };
-  }, [currentUser.id, activeContact?.id]);
+  }, [currentUser.id, fetchMessages]);
 
   // Lookup User by User ID ("do not shows the user name until they enter the user id")
   const handleLookupUserId = async (e: React.FormEvent) => {
@@ -342,7 +391,7 @@ function ChatViewPanel({
   };
 
   // Send Text Message
-  const handleSendMessage = (e?: React.FormEvent) => {
+  const handleSendMessage = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     const text = inputVal.trim();
     if (!text || !activeContact || !messageAllowed) return;
@@ -360,16 +409,36 @@ function ChatViewPanel({
         })
       );
     } else {
-      fetch('/api/messages', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          senderId: currentUser.id,
-          receiverId: activeContact.id,
-          content: text,
-          messageType: 'text',
-        }),
-      });
+      try {
+        const res = await fetch('/api/messages', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            senderId: currentUser.id,
+            receiverId: activeContact.id,
+            content: text,
+            messageType: 'text',
+          }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.message) {
+            setMessages((prev) => {
+              if (prev.some((m) => m.id === data.message.id)) return prev;
+              return [...prev, data.message];
+            });
+            setFriends((prev) =>
+              prev.map((f) =>
+                f.id === activeContact.id
+                  ? { ...f, lastMessage: text, lastMessageTime: data.message.timestamp }
+                  : f
+              )
+            );
+          }
+        }
+      } catch (err) {
+        console.error('Failed to send message via fallback:', err);
+      }
     }
   };
 
@@ -389,38 +458,56 @@ function ChatViewPanel({
       });
 
       const uploadData = await res.json();
-      if (res.ok) {
-        // Send message with file
-        if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-          wsRef.current.send(
-            JSON.stringify({
-              type: 'send_message',
-              receiverId: activeContact.id,
-              content: uploadData.messageType === 'image' ? 'Photo' : uploadData.fileName,
-              messageType: uploadData.messageType,
-              fileUrl: uploadData.fileUrl,
-              fileName: uploadData.fileName,
-              fileSize: uploadData.fileSize,
-            })
-          );
-        } else {
-          await fetch('/api/messages', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              senderId: currentUser.id,
-              receiverId: activeContact.id,
-              content: uploadData.messageType === 'image' ? 'Photo' : uploadData.fileName,
-              messageType: uploadData.messageType,
-              fileUrl: uploadData.fileUrl,
-              fileName: uploadData.fileName,
-              fileSize: uploadData.fileSize,
-            }),
+      if (!res.ok) {
+        alert(uploadData.error || 'Failed to upload file.');
+        return;
+      }
+
+      const contentVal = uploadData.messageType === 'image' ? 'Photo' : uploadData.fileName;
+
+      // Send the message via POST (guarantees DB insertion + WS broadcast to receiver + immediate echo)
+      const resMsg = await fetch('/api/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          senderId: currentUser.id,
+          receiverId: activeContact.id,
+          content: contentVal,
+          messageType: uploadData.messageType,
+          fileUrl: uploadData.fileUrl,
+          fileName: uploadData.fileName,
+          fileSize: uploadData.fileSize,
+        }),
+      });
+
+      if (resMsg.ok) {
+        const dataMsg = await resMsg.json();
+        if (dataMsg.message) {
+          // Immediately show to sender
+          setMessages((prev) => {
+            if (prev.some((m) => m.id === dataMsg.message.id)) return prev;
+            return [...prev, dataMsg.message];
           });
+          // Update friends sidebar preview
+          const previewText =
+            uploadData.messageType === 'image'
+              ? '📷 Photo'
+              : `📄 ${uploadData.fileName}`;
+          setFriends((prev) =>
+            prev.map((f) =>
+              f.id === activeContact.id
+                ? { ...f, lastMessage: previewText, lastMessageTime: dataMsg.message.timestamp }
+                : f
+            )
+          );
         }
+      } else {
+        const errorData = await resMsg.json();
+        alert(errorData.error || 'Failed to send file message.');
       }
     } catch (err) {
       console.error('File upload error:', err);
+      alert('Network error while uploading file.');
     } finally {
       setUploading(false);
       if (e.target) e.target.value = '';
@@ -1016,23 +1103,27 @@ function ChatViewPanel({
                                 </div>
                               )}
                             </div>
-                          ) : m.messageType === 'file' && m.fileUrl ? (
+                          ) : (m.messageType === 'file' || (!isImage && Boolean(m.fileUrl))) && m.fileUrl ? (
                             /* File Attachment Message */
-                            <div className="msg-file-bubble">
+                            <a
+                              href={m.fileUrl}
+                              download={m.fileName || 'download'}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="msg-file-bubble"
+                              title={`Download ${m.fileName || 'Document'}`}
+                            >
                               <div className="file-icon-box">📄</div>
                               <div className="file-meta-info">
-                                <span className="file-name-text">{m.fileName || 'Document'}</span>
-                                <span className="file-size-text">{m.fileSize || 'File'}</span>
+                                <span className="file-name-text" title={m.fileName || m.content || 'Document'}>
+                                  {m.fileName || m.content || 'Document'}
+                                </span>
+                                <span className="file-size-text">{m.fileSize || 'Attachment'}</span>
                               </div>
-                              <a
-                                href={m.fileUrl}
-                                download={m.fileName || 'download'}
-                                className="file-download-btn"
-                                title="Download file"
-                              >
+                              <div className="file-download-btn" title="Download file">
                                 ⬇️
-                              </a>
-                            </div>
+                              </div>
+                            </a>
                           ) : (
                             /* Normal Text Message */
                             <div className="msg-bubble">

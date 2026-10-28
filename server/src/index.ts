@@ -71,8 +71,17 @@ function broadcastToUser(userId: string, payload: any) {
     const data = JSON.stringify(payload);
     for (const ws of sockets) {
       if (ws.readyState === WebSocket.OPEN) {
-        ws.send(data);
+        try {
+          ws.send(data);
+        } catch (err) {
+          console.error(`Failed to send to user ${userId}:`, err);
+        }
+      } else if (ws.readyState === WebSocket.CLOSED || ws.readyState === WebSocket.CLOSING) {
+        sockets.delete(ws);
       }
+    }
+    if (sockets.size === 0) {
+      userSockets.delete(userId);
     }
   }
 }
@@ -543,27 +552,54 @@ app.get("/api/friends", async (req, res) => {
 });
 
 // 9. File & Image Upload endpoint (stores in storage/images/ or storage/files/)
-app.post("/api/upload", upload.single("file"), (req, res) => {
-  if (!req.file) {
-    return res.status(400).json({ error: "No file was uploaded." });
+app.post("/api/upload", (req, res) => {
+  upload.single("file")(req, res, (err: any) => {
+    if (err) {
+      if (err.code === "LIMIT_FILE_SIZE") {
+        return res.status(400).json({ error: "File exceeds 25 MB size limit." });
+      }
+      return res.status(400).json({ error: err.message || "Failed to upload file." });
+    }
+
+    if (!req.file) {
+      return res.status(400).json({ error: "No file was uploaded." });
+    }
+
+    const isImage = checkIsImage(req.file);
+    const subFolder = isImage ? "images" : "files";
+    const fileUrl = `/storage/${subFolder}/${req.file.filename}`;
+
+    // Human readable file size (e.g. 2.4 MB)
+    const bytes = req.file.size;
+    let formattedSize = `${bytes} B`;
+    if (bytes > 1024 * 1024) formattedSize = `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+    else if (bytes > 1024) formattedSize = `${(bytes / 1024).toFixed(1)} KB`;
+
+    res.json({
+      fileUrl,
+      fileName: req.file.originalname,
+      fileSize: formattedSize,
+      messageType: isImage ? "image" : "file",
+    });
+  });
+});
+
+// Download File Endpoint
+app.get("/api/download", (req, res) => {
+  const { path: relPath, name } = req.query;
+  if (!relPath || typeof relPath !== "string") {
+    return res.status(400).json({ error: "File path is required." });
   }
 
-  const isImage = checkIsImage(req.file);
-  const subFolder = isImage ? "images" : "files";
-  const fileUrl = `/storage/${subFolder}/${req.file.filename}`;
+  const cleanPath = path.normalize(relPath).replace(/^(\.\.[\/\\])+/, "");
+  const fullPath = path.resolve(STORAGE_DIR, cleanPath.replace(/^\/?storage\/?/, ""));
 
-  // Human readable file size (e.g. 2.4 MB)
-  const bytes = req.file.size;
-  let formattedSize = `${bytes} B`;
-  if (bytes > 1024 * 1024) formattedSize = `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  else if (bytes > 1024) formattedSize = `${(bytes / 1024).toFixed(1)} KB`;
+  if (!fullPath.startsWith(STORAGE_DIR) || !fs.existsSync(fullPath)) {
+    return res.status(404).json({ error: "File not found." });
+  }
 
-  res.json({
-    fileUrl,
-    fileName: req.file.originalname,
-    fileSize: formattedSize,
-    messageType: isImage ? "image" : "file",
-  });
+  const downloadName = (name as string) || path.basename(fullPath);
+  res.download(fullPath, downloadName);
 });
 
 // 10. Get Messages (Gated by friendship)

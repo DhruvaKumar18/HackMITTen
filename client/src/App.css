@@ -936,6 +936,15 @@
   border: 1px solid var(--border-color);
   box-shadow: var(--shadow-sm);
   max-width: 320px;
+  text-decoration: none;
+  color: inherit;
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.msg-file-bubble:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
 }
 
 .message-row.sent .msg-file-bubble {
