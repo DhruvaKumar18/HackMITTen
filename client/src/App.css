@@ -896,6 +896,35 @@
   object-fit: cover;
 }
 
+.msg-image-caption {
+  padding: 6px 10px;
+  background-color: var(--bg-card);
+  font-size: 12px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  border-top: 1px solid var(--border-color);
+}
+
+.message-row.sent .msg-image-caption {
+  background-color: rgba(114, 105, 239, 0.15);
+}
+
+.msg-image-caption .msg-image-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.msg-image-caption .msg-image-size {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
 /* File Message Bubble */
 .msg-file-bubble {
   display: flex;
@@ -1019,8 +1048,15 @@
 }
 
 @keyframes popIn {
-  from { opacity: 0; transform: translateY(10px) scale(0.95); }
-  to { opacity: 1; transform: translateY(0) scale(1); }
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.95);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
 }
 
 .emoji-grid {
@@ -1135,8 +1171,8 @@
   align-items: center;
   justify-content: center;
   background: radial-gradient(circle at 10% 20%, rgba(114, 105, 239, 0.1) 0%, transparent 40%),
-              radial-gradient(circle at 90% 80%, rgba(114, 105, 239, 0.08) 0%, transparent 40%),
-              var(--bg-app);
+    radial-gradient(circle at 90% 80%, rgba(114, 105, 239, 0.08) 0%, transparent 40%),
+    var(--bg-app);
   padding: 24px;
 }
 

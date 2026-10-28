@@ -983,6 +983,10 @@ function ChatViewPanel({
                 ) : (
                   messages.map((m) => {
                     const isMe = m.senderId === currentUser.id;
+                    const isImage =
+                      m.messageType === 'image' ||
+                      (Boolean(m.fileUrl) &&
+                        /\.(jpe?g|png|gif|webp|svg|bmp)(\?.*)?$/i.test(m.fileUrl || ''));
                     return (
                       <div key={m.id} className={`message-row ${isMe ? 'sent' : 'received'}`}>
                         {!isMe && (
@@ -994,11 +998,23 @@ function ChatViewPanel({
                         )}
                         <div className="msg-content-wrapper">
                           {/* Image Message */}
-                          {m.messageType === 'image' && m.fileUrl ? (
+                          {isImage && m.fileUrl ? (
                             <div className="msg-image-bubble">
                               <a href={m.fileUrl} target="_blank" rel="noopener noreferrer">
-                                <img src={m.fileUrl} alt={m.fileName || 'Attached Photo'} />
+                                <img
+                                  src={m.fileUrl}
+                                  alt={m.fileName || 'Attached Photo'}
+                                  loading="lazy"
+                                />
                               </a>
+                              {m.fileName && m.fileName !== 'Photo' && (
+                                <div className="msg-image-caption">
+                                  <span className="msg-image-name">{m.fileName}</span>
+                                  {m.fileSize && (
+                                    <span className="msg-image-size">({m.fileSize})</span>
+                                  )}
+                                </div>
+                              )}
                             </div>
                           ) : m.messageType === 'file' && m.fileUrl ? (
                             /* File Attachment Message */
@@ -1021,7 +1037,7 @@ function ChatViewPanel({
                             /* Normal Text Message */
                             <div className="msg-bubble">
                               <span>{m.content}</span>
-                              <button type="button" className="msg-menu-btn">⋮</button>
+                              {/* <button type="button" className="msg-menu-btn">⋮</button> */}
                             </div>
                           )}
 

@@ -29,9 +29,16 @@ app.use(express.json());
 app.use("/storage", express.static(STORAGE_DIR));
 
 // Multer Storage Configuration for Images and Files
+function checkIsImage(file: Express.Multer.File): boolean {
+  return (
+    file.mimetype.startsWith("image/") ||
+    /\.(jpg|jpeg|png|gif|webp|svg|bmp)$/i.test(file.originalname)
+  );
+}
+
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    if (file.mimetype.startsWith("image/")) {
+    if (checkIsImage(file)) {
       cb(null, IMAGES_DIR);
     } else {
       cb(null, FILES_DIR);
@@ -541,7 +548,7 @@ app.post("/api/upload", upload.single("file"), (req, res) => {
     return res.status(400).json({ error: "No file was uploaded." });
   }
 
-  const isImage = req.file.mimetype.startsWith("image/");
+  const isImage = checkIsImage(req.file);
   const subFolder = isImage ? "images" : "files";
   const fileUrl = `/storage/${subFolder}/${req.file.filename}`;
 

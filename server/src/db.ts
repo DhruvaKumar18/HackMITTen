@@ -3,6 +3,7 @@ const { Pool } = pkg;
 import crypto from "crypto";
 import fs from "fs";
 import path from "path";
+import { fileURLToPath } from "url";
 
 // PostgreSQL Pool Connection
 export const pool = new Pool({
@@ -23,7 +24,8 @@ export function generateUserIdCode(): string {
 }
 
 // Storage folders structure setup
-export const STORAGE_DIR = path.resolve("./storage");
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+export const STORAGE_DIR = path.resolve(__dirname, "../storage");
 export const CHAT_DIR = path.join(STORAGE_DIR, "chat");
 export const IMAGES_DIR = path.join(STORAGE_DIR, "images");
 export const FILES_DIR = path.join(STORAGE_DIR, "files");
