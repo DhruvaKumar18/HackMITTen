@@ -394,5 +394,38 @@
     "fileName": null,
     "fileSize": null,
     "timestamp": "2026-10-28T19:03:53.440Z"
+  },
+  {
+    "id": "m_eb31851f",
+    "senderId": "u_doris",
+    "receiverId": "u_patrick",
+    "content": "stego:Photo",
+    "messageType": "image",
+    "fileUrl": "/storage/images/test_stego.png",
+    "fileName": "Stego Photo.png",
+    "fileSize": null,
+    "timestamp": "2026-10-28T22:31:51.830Z"
+  },
+  {
+    "id": "m_0c994e33",
+    "senderId": "u_doris",
+    "receiverId": "u_patrick",
+    "content": "stego:Photo",
+    "messageType": "image",
+    "fileUrl": "/storage/images/stego_1793235046702_1793235046726_22e9c6.png",
+    "fileName": "Stego Photo.png",
+    "fileSize": "50.8 KB",
+    "timestamp": "2026-10-29T00:50:46.758Z"
+  },
+  {
+    "id": "m_3a47c231",
+    "senderId": "u_doris",
+    "receiverId": "u_patrick",
+    "content": "stego:Photo",
+    "messageType": "image",
+    "fileUrl": "/storage/images/stego_1793235130844_1793235130856_8bf246.png",
+    "fileName": "Stego Photo.png",
+    "fileSize": "935.8 KB",
+    "timestamp": "2026-10-29T00:52:10.877Z"
   }
 ]

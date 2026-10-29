@@ -40,11 +40,25 @@ A modern real-time chat application inspired by the **Chatvia** React UI templat
    - **Key Custody**: Private keys are generated and retained exclusively in browser client storage (`localStorage`) and never leave the device.
    - **Security Inspection Modal**: Click the **🔒 E2EE Active** badge in the chat header or the in-chat encryption banner to inspect the cryptographic protocol, key exchange status, and fingerprints.
 
-7. **Friend-Gated Messaging**:
+7. **Image Steganography & View-Once Vanishing Messages (🎭)**:
+   - **Secret Inside Public Cover**: Users can hide confidential private images or secret notes inside an innocuous public cover photo using **4-bit LSB (Least Significant Bit) Image Steganography** (based on the uploaded steganography engine).
+   - **Algorithm**:
+     - **Upper 4 bits** of each RGB channel represent the public cover image (`cover[i] & 0xF0`).
+     - **Lower 4 bits** carry the private secret image's most significant nibbles (`secret[i] >> 4`).
+     - The output is encoded as a lossless PNG, rendering visually identical to the public photo.
+   - **Menu Button & Decrypt Option**:
+     - In the chat timeline, the image displays as the normal public photo.
+     - A `⋮` menu button on the public image and a prominent action button `[ 🔓 Decrypt Private Image ]` (with a red `VIEW ONCE` pill) allow the receiver to decrypt.
+   - **Self-Destruct & Auto-Vanish at Receiver End**:
+     - When clicked, a high-security View-Once overlay displays the decrypted private secret with a **15-second countdown timer** and animated progress bar.
+     - Once closed or when the timer expires, the private image **vanishes completely** from memory and client storage.
+     - The message updates to `🔒 Private image has vanished (viewed once)` and notifies the sender in real-time (`👁️ Private image opened & vanished by receiver`).
+
+8. **Friend-Gated Messaging**:
    - Direct messaging is strictly restricted to accepted friends.
    - Real-time WebSocket notifications for friend requests, message delivery, and typing indicators.
 
-8. **Split-Screen Demo Mode**:
+9. **Split-Screen Demo Mode**:
    - Click the **⚡ icon** on the left rail to view two users (e.g. Doris and Patrick) chatting side-by-side in real time!
 
 ---

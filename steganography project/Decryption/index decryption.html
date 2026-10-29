@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Image decryption app</title>
+    <link rel="stylesheet" href="index.css">
+</head>
+<body>
+    <div class="container">
+       <canvas aria-label="Decrypted image preview"></canvas>
+    </div>
+    <div class="input-container">
+        <label for="target">Upload encrypted image</label>
+        <input type="file" id="target" accept="image/png,image/*">
+    </div>
+    
+    <button type="button" disabled>Download PNG</button>
+    <p id="status" role="status" aria-live="polite"></p>
+    <script src="index decryption.js" type="text/javascript"></script>
+</body>
+</html>

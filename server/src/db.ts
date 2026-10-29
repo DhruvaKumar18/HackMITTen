@@ -93,7 +93,23 @@ export async function initDatabase() {
       CREATE INDEX IF NOT EXISTS idx_messages_pair_pg ON messages (sender_id, receiver_id, timestamp);
       CREATE INDEX IF NOT EXISTS idx_users_id_code ON users (user_id_code);
       CREATE INDEX IF NOT EXISTS idx_users_username ON users (username);
+
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS public_key TEXT;
+      ALTER TABLE messages ADD COLUMN IF NOT EXISTS is_stego BOOLEAN DEFAULT FALSE;
+      ALTER TABLE messages ADD COLUMN IF NOT EXISTS is_vanished BOOLEAN DEFAULT FALSE;
     `);
+
+    // Ensure demo users have public keys for E2EE
+    const demoKeys: Record<string, string> = {
+      u_doris: JSON.stringify({ key_ops: [], ext: true, kty: "EC", x: "DytdV38Hk_yFbhhnvwFeWxSBJM12lgLAeORqYvBmWnE", y: "1mllunFdQIGm31iUmOIWp3yWDtMl2thWi41fMSoB60Y", crv: "P-256" }),
+      u_patrick: JSON.stringify({ key_ops: [], ext: true, kty: "EC", x: "i1OK_GwWlbj0S46-6vXqRnab2KxOywNxxEbRUwip8Ys", y: "sAgdAWs8rxg_7mMiZzv0TQTBw5q2st37LnBF4ilsYc8", crv: "P-256" }),
+      u_steve: JSON.stringify({ key_ops: [], ext: true, kty: "EC", x: "i0XNjB8ZQnI-QTzZ51eakTJRbEFwJlcvO0thhxNIpoI", y: "kzNna8I2AXY8ymOYUG72eZi1GmkWlvxRa8XViOWT2Lo", crv: "P-256" }),
+      u_mark: JSON.stringify({ key_ops: [], ext: true, kty: "EC", x: "Tcb5WolQ42kos_aopvh7I9gMOno8T7T_bYB2i3BxQPE", y: "18UaVglMkGjC4ZeMXNiOTdYogoPWaQ9PgRVDzaIW4jQ", crv: "P-256" }),
+      u_emily: JSON.stringify({ key_ops: [], ext: true, kty: "EC", x: "7aTbM365DjSeT47_ATI8FFChhSJsI13ZGDdN8TXLu8w", y: "4quwgg4VY_3TxFgedD-Rz00AxEJ8CyTVDuGIO6JZ5ec", crv: "P-256" }),
+    };
+    for (const [uid, pkey] of Object.entries(demoKeys)) {
+      await client.query(`UPDATE users SET public_key = $1 WHERE id = $2 AND public_key IS NULL`, [pkey, uid]);
+    }
 
     // 2. Check if users table is empty; if so, seed demo users
     const userCountRes = await client.query("SELECT COUNT(*) FROM users");

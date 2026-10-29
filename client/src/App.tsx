@@ -7,6 +7,15 @@ import {
   decryptMessage,
   isE2EEMessage,
 } from './e2ee';
+import {
+  embedSteganography,
+  extractSteganography,
+  createSecretTextCard,
+  createSampleCoverCanvas,
+  createSampleSecretCanvas,
+  isStegoVanished,
+  markStegoVanished,
+} from './steganography';
 
 interface User {
   id: string;
@@ -29,6 +38,8 @@ interface Message {
   content: string;
   decryptedContent?: string;
   isEncrypted?: boolean;
+  isStego?: boolean;
+  isVanished?: boolean;
   messageType?: 'text' | 'image' | 'file';
   fileUrl?: string | null;
   fileName?: string | null;
@@ -143,6 +154,29 @@ function ChatViewPanel({
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const imageInputRef = useRef<HTMLInputElement | null>(null);
 
+  // Steganography Encoder Modal State
+  const [showStegoModal, setShowStegoModal] = useState(false);
+  const [stegoCoverImg, setStegoCoverImg] = useState<string | null>(null);
+  const [stegoSecretType, setStegoSecretType] = useState<'image' | 'text'>('image');
+  const [stegoSecretImg, setStegoSecretImg] = useState<string | null>(null);
+  const [stegoSecretText, setStegoSecretText] = useState('Secret meeting tonight at 9:00 PM. Passcode: 7721.');
+  const [stegoEncoding, setStegoEncoding] = useState(false);
+  const [stegoStatus, setStegoStatus] = useState<string | null>(null);
+  const stegoCoverInputRef = useRef<HTMLInputElement | null>(null);
+  const stegoSecretInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Steganography View-Once Modal State
+  const [viewOnceModal, setViewOnceModal] = useState<{
+    open: boolean;
+    messageId: string;
+    dataUrl: string | null;
+    timeLeft: number;
+  } | null>(null);
+  const [decryptingStegoId, setDecryptingStegoId] = useState<string | null>(null);
+
+  // Active Image Dropdown Menu State
+  const [openImgMenuId, setOpenImgMenuId] = useState<string | null>(null);
+
   const toggleTheme = () => {
     const nextTheme = theme === 'light' ? 'dark' : 'light';
     setTheme(nextTheme);
@@ -221,21 +255,25 @@ function ChatViewPanel({
     };
   }, [currentUser.id, activeContact?.id, activeContact?.publicKey]);
 
-  // Decrypt a list of messages using the active sharedKey
+  // Decrypt a list of messages using the active sharedKey and identify Steganography
   const decryptList = useCallback(
     async (rawList: Message[], key: CryptoKey | null): Promise<Message[]> => {
       return Promise.all(
         rawList.map(async (m) => {
-          if (m.decryptedContent !== undefined) return m;
+          const isStego = Boolean(m.isStego || m.content?.startsWith('stego:') || m.fileName?.toLowerCase().includes('stego'));
+          const isVanished = isStego && (Boolean(m.isVanished) || isStegoVanished(m.id, currentUser.id, m.isVanished));
+          if (m.decryptedContent !== undefined) {
+            return { ...m, isStego, isVanished };
+          }
           if (isE2EEMessage(m.content)) {
             const res = await decryptMessage(m.content, key);
-            return { ...m, decryptedContent: res.text, isEncrypted: res.isEncrypted };
+            return { ...m, decryptedContent: res.text, isEncrypted: res.isEncrypted, isStego, isVanished };
           }
-          return { ...m, decryptedContent: m.content, isEncrypted: false };
+          return { ...m, decryptedContent: m.content, isEncrypted: false, isStego, isVanished };
         })
       );
     },
-    []
+    [currentUser.id]
   );
 
   // When sharedKey arrives, re-decrypt any messages awaiting key
@@ -325,10 +363,14 @@ function ChatViewPanel({
                 decrypted = dec.text;
                 isEncrypted = dec.isEncrypted;
               }
+              const isStego = Boolean(rawMsg.isStego || rawMsg.content?.startsWith('stego:') || rawMsg.fileName?.toLowerCase().includes('stego'));
+              const isVanished = isStego && (Boolean(rawMsg.isVanished) || isStegoVanished(rawMsg.id, currentUser.id, rawMsg.isVanished));
               const processedMsg: Message = {
                 ...rawMsg,
                 decryptedContent: decrypted,
                 isEncrypted,
+                isStego,
+                isVanished,
               };
 
               setMessages((prev) => {
@@ -344,13 +386,18 @@ function ChatViewPanel({
               prev.map((f) => {
                 if (f.id === rawMsg.senderId || f.id === rawMsg.receiverId) {
                   let preview = rawMsg.content;
-                  if (rawMsg.messageType === 'image') preview = '📷 Photo';
+                  if (rawMsg.isStego || rawMsg.content?.startsWith('stego:')) preview = '🎭 Stego Photo (Secret Inside)';
+                  else if (rawMsg.messageType === 'image') preview = '📷 Photo';
                   else if (rawMsg.messageType === 'file') preview = `📄 ${rawMsg.fileName || 'File'}`;
                   else if (isE2EEMessage(rawMsg.content)) preview = '🔒 Encrypted Message';
                   return { ...f, lastMessage: preview, lastMessageTime: rawMsg.timestamp };
                 }
                 return f;
               })
+            );
+          } else if (data.type === 'stego_vanish_update') {
+            setMessages((prev) =>
+              prev.map((m) => (m.id === data.messageId ? { ...m, isVanished: true } : m))
             );
           } else if (data.type === 'user_status') {
             setFriends((prev) =>
@@ -611,6 +658,176 @@ function ChatViewPanel({
     } finally {
       setUploading(false);
       if (e.target) e.target.value = '';
+    }
+  };
+
+  // Auto-Destruct Countdown Timer for View-Once Private Image
+  useEffect(() => {
+    if (!viewOnceModal?.open) return;
+    if (viewOnceModal.timeLeft <= 0) {
+      handleCloseAndVanish();
+      return;
+    }
+
+    const timer = setInterval(() => {
+      setViewOnceModal((prev) => {
+        if (!prev || !prev.open) return null;
+        if (prev.timeLeft <= 1) {
+          return { ...prev, timeLeft: 0 };
+        }
+        return { ...prev, timeLeft: prev.timeLeft - 1 };
+      });
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [viewOnceModal?.open, viewOnceModal?.timeLeft]);
+
+  // Vanish and close the view-once private image
+  const handleCloseAndVanish = async () => {
+    if (!viewOnceModal) return;
+    const msgId = viewOnceModal.messageId;
+
+    // 1. Instantly wipe private image data from memory
+    setViewOnceModal(null);
+
+    // 2. Mark as vanished in localStorage
+    markStegoVanished(msgId, currentUser.id);
+
+    // 3. Mark as vanished in React state
+    setMessages((prev) =>
+      prev.map((m) => (m.id === msgId ? { ...m, isVanished: true } : m))
+    );
+
+    // 4. Notify server via REST
+    try {
+      await fetch(`/api/messages/${msgId}/vanish`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: currentUser.id }),
+      });
+    } catch (err) {
+      console.error('Failed to notify vanish:', err);
+    }
+
+    // 5. Broadcast to sender via WebSocket
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: 'stego_vanish', messageId: msgId }));
+    }
+  };
+
+  // Decrypt Steganography Private Image (View Once)
+  const handleDecryptStego = async (m: Message) => {
+    setOpenImgMenuId(null);
+    if (m.isVanished || isStegoVanished(m.id, currentUser.id, m.isVanished)) {
+      alert('This private image has already been viewed and has vanished.');
+      return;
+    }
+
+    if (!m.fileUrl) return;
+
+    setDecryptingStegoId(m.id);
+    try {
+      const res = await extractSteganography(m.fileUrl);
+      setViewOnceModal({
+        open: true,
+        messageId: m.id,
+        dataUrl: res.dataUrl,
+        timeLeft: 15,
+      });
+    } catch (err: any) {
+      console.error('Steganography decryption error:', err);
+      alert(err.message || 'Failed to decrypt private image.');
+    } finally {
+      setDecryptingStegoId(null);
+    }
+  };
+
+  // Embed and Send Steganography Image
+  const handleSendStegoImage = async () => {
+    if (!activeContact || !messageAllowed) return;
+
+    const cover = stegoCoverImg || createSampleCoverCanvas('nature');
+    let secretSource: string | HTMLCanvasElement;
+
+    if (stegoSecretType === 'text') {
+      if (!stegoSecretText.trim()) {
+        alert('Please enter a secret message text.');
+        return;
+      }
+      secretSource = createSecretTextCard(stegoSecretText.trim());
+    } else {
+      secretSource = stegoSecretImg || createSampleSecretCanvas();
+    }
+
+    setStegoEncoding(true);
+    setStegoStatus('Embedding private image into public cover via 4-bit LSB steganography...');
+
+    try {
+      const { blob } = await embedSteganography(cover, secretSource);
+
+      setStegoStatus('Uploading steganographic image...');
+      const formData = new FormData();
+      formData.append('file', blob, `stego_${Date.now()}.png`);
+
+      const res = await fetch('/api/upload', {
+        method: 'POST',
+        body: formData,
+      });
+
+      const uploadData = await res.json();
+      if (!res.ok) {
+        alert(uploadData.error || 'Failed to upload steganographic image.');
+        return;
+      }
+
+      setStegoStatus('Sending message...');
+      const resMsg = await fetch('/api/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          senderId: currentUser.id,
+          receiverId: activeContact.id,
+          content: 'stego:Photo',
+          messageType: 'image',
+          fileUrl: uploadData.fileUrl,
+          fileName: 'Stego Photo.png',
+          fileSize: uploadData.fileSize,
+          isStego: true,
+        }),
+      });
+
+      if (resMsg.ok) {
+        const dataMsg = await resMsg.json();
+        if (dataMsg.message) {
+          const sentMsg: Message = {
+            ...dataMsg.message,
+            decryptedContent: 'Stego Photo',
+            isStego: true,
+            isVanished: false,
+          };
+          setMessages((prev) => {
+            if (prev.some((m) => m.id === sentMsg.id)) return prev;
+            return [...prev, sentMsg];
+          });
+          setFriends((prev) =>
+            prev.map((f) =>
+              f.id === activeContact.id
+                ? { ...f, lastMessage: '🎭 Stego Photo (Secret Inside)', lastMessageTime: dataMsg.message.timestamp }
+                : f
+            )
+          );
+        }
+      }
+
+      setShowStegoModal(false);
+      setStegoCoverImg(null);
+      setStegoSecretImg(null);
+      setStegoStatus(null);
+    } catch (err: any) {
+      console.error('Steganography send error:', err);
+      alert(err.message || 'Failed to create steganography image.');
+    } finally {
+      setStegoEncoding(false);
     }
   };
 
@@ -1192,6 +1409,8 @@ function ChatViewPanel({
                       m.messageType === 'image' ||
                       (Boolean(m.fileUrl) &&
                         /\.(jpe?g|png|gif|webp|svg|bmp)(\?.*)?$/i.test(m.fileUrl || ''));
+                    const isStegoMsg = Boolean(m.isStego || m.content?.startsWith('stego:') || m.fileName?.toLowerCase().includes('stego'));
+                    const msgVanished = isStegoMsg && (Boolean(m.isVanished) || isStegoVanished(m.id, currentUser.id, m.isVanished));
                     return (
                       <div key={m.id} className={`message-row ${isMe ? 'sent' : 'received'}`}>
                         {!isMe && (
@@ -1205,6 +1424,64 @@ function ChatViewPanel({
                           {/* Image Message */}
                           {isImage && m.fileUrl ? (
                             <div className="msg-image-bubble">
+                              {/* Steganography Badge if image contains hidden private secret */}
+                              {isStegoMsg && (
+                                <div className="stego-badge" title="4-bit LSB Steganography: Secret Image Embedded">
+                                  <span>🎭</span>
+                                  <span>Secret Embedded</span>
+                                </div>
+                              )}
+
+                              {/* Options Menu Button on the Public Image */}
+                              <button
+                                type="button"
+                                className="img-menu-btn"
+                                title="Image Options"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setOpenImgMenuId(openImgMenuId === m.id ? null : m.id);
+                                }}
+                              >
+                                ⋮
+                              </button>
+
+                              {/* Menu Dropdown */}
+                              {openImgMenuId === m.id && (
+                                <div className="img-menu-dropdown" onClick={(e) => e.stopPropagation()}>
+                                  {isStegoMsg && !isMe && !msgVanished && (
+                                    <button
+                                      type="button"
+                                      className="img-menu-item action-decrypt"
+                                      onClick={() => handleDecryptStego(m)}
+                                    >
+                                      🔓 Decrypt Private Image (View Once)
+                                    </button>
+                                  )}
+                                  {isStegoMsg && !isMe && msgVanished && (
+                                    <button type="button" className="img-menu-item" disabled>
+                                      🔒 Private Image Vanished
+                                    </button>
+                                  )}
+                                  <a
+                                    href={m.fileUrl}
+                                    download={m.fileName || 'image.png'}
+                                    className="img-menu-item"
+                                    onClick={() => setOpenImgMenuId(null)}
+                                  >
+                                    ⬇️ Download Public Image
+                                  </a>
+                                  <a
+                                    href={m.fileUrl}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="img-menu-item"
+                                    onClick={() => setOpenImgMenuId(null)}
+                                  >
+                                    🔍 View Fullscreen
+                                  </a>
+                                </div>
+                              )}
+
                               <a href={m.fileUrl} target="_blank" rel="noopener noreferrer">
                                 <img
                                   src={m.fileUrl}
@@ -1212,7 +1489,45 @@ function ChatViewPanel({
                                   loading="lazy"
                                 />
                               </a>
-                              {m.fileName && m.fileName !== 'Photo' && (
+
+                              {/* Steganography View-Once Action Button & Status */}
+                              {isStegoMsg && (
+                                <div className="msg-stego-actions">
+                                  {!isMe ? (
+                                    !msgVanished ? (
+                                      <button
+                                        type="button"
+                                        className="stego-decrypt-btn"
+                                        onClick={() => handleDecryptStego(m)}
+                                        disabled={decryptingStegoId === m.id}
+                                      >
+                                        {decryptingStegoId === m.id ? (
+                                          <span>⏳ Decrypting Private Image...</span>
+                                        ) : (
+                                          <>
+                                            <span>🔓 Decrypt Private Image</span>
+                                            <span className="view-once-pill">View Once</span>
+                                          </>
+                                        )}
+                                      </button>
+                                    ) : (
+                                      <div className="stego-vanished-badge">
+                                        <span>🔒 Private image has vanished (viewed once)</span>
+                                      </div>
+                                    )
+                                  ) : (
+                                    <div className="stego-sender-indicator">
+                                      {msgVanished ? (
+                                        <span className="vanished-done">👁️ Private image opened & vanished by receiver</span>
+                                      ) : (
+                                        <span className="vanished-waiting">🎭 Private secret embedded (View-Once for receiver)</span>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+
+                              {m.fileName && m.fileName !== 'Photo' && m.fileName !== 'Stego Photo.png' && (
                                 <div className="msg-image-caption">
                                   <span className="msg-image-name">{m.fileName}</span>
                                   {m.fileSize && (
@@ -1337,6 +1652,34 @@ function ChatViewPanel({
               style={{ display: 'none' }}
               onChange={handleFileUpload}
             />
+            <input
+              type="file"
+              ref={stegoCoverInputRef}
+              accept="image/*"
+              style={{ display: 'none' }}
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) {
+                  const reader = new FileReader();
+                  reader.onload = () => setStegoCoverImg(reader.result as string);
+                  reader.readAsDataURL(file);
+                }
+              }}
+            />
+            <input
+              type="file"
+              ref={stegoSecretInputRef}
+              accept="image/*"
+              style={{ display: 'none' }}
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) {
+                  const reader = new FileReader();
+                  reader.onload = () => setStegoSecretImg(reader.result as string);
+                  reader.readAsDataURL(file);
+                }
+              }}
+            />
 
             {/* Input Bar */}
             {messageAllowed && (
@@ -1376,6 +1719,19 @@ function ChatViewPanel({
                     disabled={uploading}
                   >
                     📎
+                  </button>
+                  <button
+                    type="button"
+                    className="input-action-btn stego-btn"
+                    title="Send Private Steganography Message (Hide Private Image/Message in Public Photo)"
+                    onClick={() => {
+                      if (!stegoCoverImg) setStegoCoverImg(createSampleCoverCanvas('nature'));
+                      if (!stegoSecretImg) setStegoSecretImg(createSampleSecretCanvas());
+                      setShowStegoModal(true);
+                    }}
+                    disabled={uploading}
+                  >
+                    🎭
                   </button>
                 </div>
                 <button
@@ -1474,6 +1830,244 @@ function ChatViewPanel({
                   <code className="fp-code">{activeContact.userIdCode}</code>
                 </div>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Steganography Image Encoder Modal */}
+      {showStegoModal && activeContact && (
+        <div className="stego-modal-backdrop" onClick={() => !stegoEncoding && setShowStegoModal(false)}>
+          <div className="stego-modal-card" onClick={(e) => e.stopPropagation()}>
+            <div className="stego-modal-header">
+              <div>
+                <h3>🎭 Steganography Image Encoder</h3>
+                <p>Hide a private secret image or note inside a public cover photo. Seen only once by receiver.</p>
+              </div>
+              <button
+                type="button"
+                className="security-modal-close"
+                onClick={() => !stegoEncoding && setShowStegoModal(false)}
+                disabled={stegoEncoding}
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="stego-modal-body">
+              <div className="stego-grid">
+                {/* 1. Public Cover Photo */}
+                <div className="stego-card-box">
+                  <div className="stego-box-title">
+                    <span>1. Public Cover Image</span>
+                    <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>Visible in chat</span>
+                  </div>
+
+                  <div className="stego-preview-frame">
+                    {stegoCoverImg ? (
+                      <img src={stegoCoverImg} alt="Cover Preview" className="stego-preview-img" />
+                    ) : (
+                      <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>No cover image</span>
+                    )}
+                  </div>
+
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <button
+                      type="button"
+                      className="preset-pill-btn"
+                      style={{ flex: 1, textAlign: 'center' }}
+                      onClick={() => stegoCoverInputRef.current?.click()}
+                    >
+                      📁 Upload Custom
+                    </button>
+                  </div>
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>Or pick preset:</span>
+                    <div className="preset-pill-group">
+                      <button
+                        type="button"
+                        className="preset-pill-btn"
+                        onClick={() => setStegoCoverImg(createSampleCoverCanvas('nature'))}
+                      >
+                        🏔️ Nature
+                      </button>
+                      <button
+                        type="button"
+                        className="preset-pill-btn"
+                        onClick={() => setStegoCoverImg(createSampleCoverCanvas('city'))}
+                      >
+                        🌆 Sunset City
+                      </button>
+                      <button
+                        type="button"
+                        className="preset-pill-btn"
+                        onClick={() => setStegoCoverImg(createSampleCoverCanvas('abstract'))}
+                      >
+                        🎨 Abstract
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 2. Private Secret */}
+                <div className="stego-card-box">
+                  <div className="stego-box-title">
+                    <span>2. Private Secret</span>
+                    <span style={{ fontSize: 11, color: '#ef4444', fontWeight: 700 }}>Vanishes after 1 view</span>
+                  </div>
+
+                  <div className="stego-tab-group">
+                    <button
+                      type="button"
+                      className={`stego-tab-btn ${stegoSecretType === 'image' ? 'active' : ''}`}
+                      onClick={() => setStegoSecretType('image')}
+                    >
+                      🖼️ Private Photo
+                    </button>
+                    <button
+                      type="button"
+                      className={`stego-tab-btn ${stegoSecretType === 'text' ? 'active' : ''}`}
+                      onClick={() => setStegoSecretType('text')}
+                    >
+                      ✍️ Secret Note
+                    </button>
+                  </div>
+
+                  {stegoSecretType === 'image' ? (
+                    <>
+                      <div className="stego-preview-frame">
+                        {stegoSecretImg ? (
+                          <img src={stegoSecretImg} alt="Secret Preview" className="stego-preview-img" />
+                        ) : (
+                          <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>No secret image</span>
+                        )}
+                      </div>
+
+                      <div style={{ display: 'flex', gap: 6 }}>
+                        <button
+                          type="button"
+                          className="preset-pill-btn"
+                          style={{ flex: 1, textAlign: 'center' }}
+                          onClick={() => stegoSecretInputRef.current?.click()}
+                        >
+                          📁 Upload Private Photo
+                        </button>
+                        <button
+                          type="button"
+                          className="preset-pill-btn"
+                          onClick={() => setStegoSecretImg(createSampleSecretCanvas())}
+                        >
+                          🚨 Top Secret Preset
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <textarea
+                        className="stego-textarea"
+                        placeholder="Type confidential message to embed inside image..."
+                        value={stegoSecretText}
+                        onChange={(e) => setStegoSecretText(e.target.value)}
+                      />
+                      <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
+                        Text is auto-rendered onto a private security card image before 4-bit LSB embedding.
+                      </span>
+                    </>
+                  )}
+                </div>
+              </div>
+
+              {/* Algorithm Explanation */}
+              <div className="stego-info-banner">
+                <div className="stego-info-title">
+                  <span>🔬 4-Bit LSB Image Steganography</span>
+                </div>
+                <div>
+                  • <strong>Public Cover:</strong> Upper 4 bits of RGB channels are preserved (<code>pixel &amp; 0xF0</code>). The output looks identical to the public photo.
+                </div>
+                <div>
+                  • <strong>Private Secret:</strong> Upper 4 bits of the secret image are shifted into the lower 4 bits (<code>secret &gt;&gt; 4</code>).
+                </div>
+                <div>
+                  • <strong>View Once:</strong> Receiver clicks "Decrypt Private Image" to extract secret. Upon dismissal or 15s timeout, it vanishes permanently.
+                </div>
+              </div>
+
+              {stegoStatus && (
+                <div style={{ fontSize: 12, color: '#818cf8', fontWeight: 600, textAlign: 'center' }}>
+                  ⏳ {stegoStatus}
+                </div>
+              )}
+            </div>
+
+            <div className="stego-modal-footer">
+              <button
+                type="button"
+                className="btn-reject"
+                onClick={() => setShowStegoModal(false)}
+                disabled={stegoEncoding}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="stego-send-submit-btn"
+                onClick={handleSendStegoImage}
+                disabled={stegoEncoding}
+              >
+                {stegoEncoding ? '⏳ Embedding Secret...' : '🚀 Embed Secret & Send Image'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Steganography High-Security View-Once Vanishing Modal */}
+      {viewOnceModal?.open && viewOnceModal.dataUrl && (
+        <div className="view-once-backdrop" onClick={handleCloseAndVanish}>
+          <div className="view-once-card" onClick={(e) => e.stopPropagation()}>
+            <div className="view-once-header">
+              <div className="view-once-title">
+                <span>🚨</span>
+                <span>DECRYPTED PRIVATE IMAGE</span>
+              </div>
+              <div className="view-once-timer-badge">
+                <span>⏱️</span>
+                <span>Vanishes in {viewOnceModal.timeLeft}s</span>
+              </div>
+            </div>
+
+            <div className="view-once-timer-bar-wrap">
+              <div
+                className="view-once-timer-bar"
+                style={{ width: `${(viewOnceModal.timeLeft / 15) * 100}%` }}
+              />
+            </div>
+
+            <div className="view-once-body">
+              <div className="view-once-img-wrap">
+                <img
+                  src={viewOnceModal.dataUrl}
+                  alt="Decrypted Private Secret"
+                  className="view-once-image"
+                />
+              </div>
+
+              <p className="view-once-warning-note">
+                ⚠️ <strong>HIGH SECURITY VIEW-ONCE:</strong> This private secret was extracted directly from the public cover photo's lower nibbles. Once closed or when the 15-second timer expires, this private image will be permanently burned and cannot be viewed again.
+              </p>
+            </div>
+
+            <div className="view-once-footer">
+              <button
+                type="button"
+                className="vanish-burn-btn"
+                onClick={handleCloseAndVanish}
+              >
+                <span>🔥</span>
+                <span>Vanish &amp; Close Now</span>
+              </button>
             </div>
           </div>
         </div>

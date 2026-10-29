@@ -25,8 +25,16 @@ const PORT = 5000;
 app.use(cors());
 app.use(express.json());
 
-// Serve uploaded files statically from storage/ folder
-app.use("/storage", express.static(STORAGE_DIR));
+// Serve uploaded files statically from storage/ folder with full CORS for canvas steganography
+app.use(
+  "/storage",
+  (_req, res, next) => {
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+    next();
+  },
+  express.static(STORAGE_DIR)
+);
 
 // Multer Storage Configuration for Images and Files
 function checkIsImage(file: Express.Multer.File): boolean {
@@ -656,7 +664,7 @@ app.get("/api/messages", async (req, res) => {
     const msgRes = await pool.query(
       `SELECT id, sender_id AS "senderId", receiver_id AS "receiverId", content,
               message_type AS "messageType", file_url AS "fileUrl", file_name AS "fileName",
-              file_size AS "fileSize", timestamp
+              file_size AS "fileSize", is_stego AS "isStego", is_vanished AS "isVanished", timestamp
        FROM messages
        WHERE (sender_id = $1 AND receiver_id = $2) OR (sender_id = $2 AND receiver_id = $1)
        ORDER BY timestamp ASC`,
@@ -671,7 +679,7 @@ app.get("/api/messages", async (req, res) => {
 
 // 11. Send Message via REST (Gated by friendship, saves to PostgreSQL + storage/chat/)
 app.post("/api/messages", async (req, res) => {
-  const { senderId, receiverId, content, messageType, fileUrl, fileName, fileSize } = req.body;
+  const { senderId, receiverId, content, messageType, fileUrl, fileName, fileSize, isStego } = req.body;
   if (!senderId || !receiverId) {
     return res.status(400).json({ error: "senderId and receiverId are required." });
   }
@@ -683,16 +691,16 @@ app.post("/api/messages", async (req, res) => {
 
   const msgId = `m_${crypto.randomUUID().slice(0, 8)}`;
   const mType = messageType || "text";
-  const textContent = content || (mType === "image" ? "Photo" : fileName || "Attachment");
+  const textContent = content || (mType === "image" ? (isStego ? "Stego Photo" : "Photo") : fileName || "Attachment");
 
   try {
     const insertRes = await pool.query(
-      `INSERT INTO messages (id, sender_id, receiver_id, content, message_type, file_url, file_name, file_size)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      `INSERT INTO messages (id, sender_id, receiver_id, content, message_type, file_url, file_name, file_size, is_stego)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
        RETURNING id, sender_id AS "senderId", receiver_id AS "receiverId", content,
                  message_type AS "messageType", file_url AS "fileUrl", file_name AS "fileName",
-                 file_size AS "fileSize", timestamp`,
-      [msgId, senderId, receiverId, textContent, mType, fileUrl || null, fileName || null, fileSize || null]
+                 file_size AS "fileSize", is_stego AS "isStego", is_vanished AS "isVanished", timestamp`,
+      [msgId, senderId, receiverId, textContent, mType, fileUrl || null, fileName || null, fileSize || null, Boolean(isStego)]
     );
 
     const newMessage = insertRes.rows[0];
@@ -708,6 +716,27 @@ app.post("/api/messages", async (req, res) => {
   } catch (err) {
     console.error("Send message error:", err);
     res.status(500).json({ error: "Failed to save message." });
+  }
+});
+
+// 12. Vanish Steganography Private Image (View Once)
+app.post("/api/messages/:id/vanish", async (req, res) => {
+  const { id } = req.params;
+  try {
+    const updateRes = await pool.query(
+      `UPDATE messages SET is_vanished = TRUE WHERE id = $1 RETURNING sender_id AS "senderId", receiver_id AS "receiverId"`,
+      [id]
+    );
+    if (updateRes.rows.length > 0) {
+      const { senderId, receiverId } = updateRes.rows[0];
+      await syncChatBackup(senderId, receiverId);
+      broadcastToUser(senderId, { type: "stego_vanish_update", messageId: id });
+      broadcastToUser(receiverId, { type: "stego_vanish_update", messageId: id });
+    }
+    res.json({ success: true });
+  } catch (err) {
+    console.error("Vanish error:", err);
+    res.status(500).json({ error: "Failed to mark message as vanished." });
   }
 });
 
@@ -736,7 +765,7 @@ wss.on("connection", (ws, req) => {
       const data = JSON.parse(raw.toString());
 
       if (data.type === "send_message") {
-        const { receiverId, content, messageType, fileUrl, fileName, fileSize } = data;
+        const { receiverId, content, messageType, fileUrl, fileName, fileSize, isStego } = data;
         if (!receiverId) return;
 
         const friends = await areFriends(userId, receiverId);
@@ -752,15 +781,15 @@ wss.on("connection", (ws, req) => {
 
         const msgId = `m_${crypto.randomUUID().slice(0, 8)}`;
         const mType = messageType || "text";
-        const textContent = content || (mType === "image" ? "Photo" : fileName || "Attachment");
+        const textContent = content || (mType === "image" ? (isStego ? "Stego Photo" : "Photo") : fileName || "Attachment");
 
         const insertRes = await pool.query(
-          `INSERT INTO messages (id, sender_id, receiver_id, content, message_type, file_url, file_name, file_size)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+          `INSERT INTO messages (id, sender_id, receiver_id, content, message_type, file_url, file_name, file_size, is_stego)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
            RETURNING id, sender_id AS "senderId", receiver_id AS "receiverId", content,
                      message_type AS "messageType", file_url AS "fileUrl", file_name AS "fileName",
-                     file_size AS "fileSize", timestamp`,
-          [msgId, userId, receiverId, textContent, mType, fileUrl || null, fileName || null, fileSize || null]
+                     file_size AS "fileSize", is_stego AS "isStego", is_vanished AS "isVanished", timestamp`,
+          [msgId, userId, receiverId, textContent, mType, fileUrl || null, fileName || null, fileSize || null, Boolean(isStego)]
         );
 
         const newMessage = insertRes.rows[0];
@@ -771,6 +800,20 @@ wss.on("connection", (ws, req) => {
         // Send to receiver & echo to sender
         broadcastToUser(receiverId, { type: "new_message", message: newMessage });
         broadcastToUser(userId, { type: "new_message", message: newMessage });
+      } else if (data.type === "stego_vanish") {
+        const { messageId } = data;
+        if (messageId) {
+          const updateRes = await pool.query(
+            `UPDATE messages SET is_vanished = TRUE WHERE id = $1 RETURNING sender_id AS "senderId", receiver_id AS "receiverId"`,
+            [messageId]
+          );
+          if (updateRes.rows.length > 0) {
+            const { senderId, receiverId } = updateRes.rows[0];
+            await syncChatBackup(senderId, receiverId);
+            broadcastToUser(senderId, { type: "stego_vanish_update", messageId });
+            broadcastToUser(receiverId, { type: "stego_vanish_update", messageId });
+          }
+        }
       } else if (data.type === "typing") {
         const { receiverId, isTyping } = data;
         if (receiverId && (await areFriends(userId, receiverId))) {

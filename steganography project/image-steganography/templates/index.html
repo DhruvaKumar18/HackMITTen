@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Image Steganography</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <main class="shell">
+    <header class="hero">
+      <p class="eyebrow">LOCAL • PRIVATE • LOSSLESS</p>
+      <h1>Image steganography</h1>
+      <p>Hide a private image inside a public PNG with authenticated AES-256-GCM encryption.</p>
+    </header>
+
+    <div id="message" class="message" role="status" aria-live="polite"></div>
+    <div class="grid">
+      <section class="card">
+        <div class="section-title"><span>01</span><h2>Encrypt</h2></div>
+        <p class="muted">The public cover remains visible. The private file is encrypted and embedded without resizing or recompressing it.</p>
+        <form id="encrypt-form">
+          <label class="upload">
+            <span>Private image</span>
+            <input id="private-image" name="private_image" type="file" accept="image/png,image/jpeg,image/webp" required>
+            <strong>Choose a PNG, JPEG, or WebP</strong>
+            <small id="private-info">No file selected</small>
+          </label>
+          <label class="upload">
+            <span>Public cover image</span>
+            <input id="cover-image" name="cover_image" type="file" accept="image/*" required>
+            <strong>Choose a cover image</strong>
+            <small id="cover-info">No file selected</small>
+          </label>
+          <div class="previews">
+            <figure><img id="private-preview" alt="Private image preview"><figcaption>Private</figcaption></figure>
+            <figure><img id="cover-preview" alt="Cover image preview"><figcaption>Cover</figcaption></figure>
+          </div>
+          <button type="submit" class="primary">Encrypt image</button>
+        </form>
+        <div id="encrypt-result" class="result hidden">
+          <h3>Encoded public image</h3>
+          <img id="encoded-preview" alt="Encoded public image preview">
+          <p id="encrypt-details"></p>
+          <button id="download-encoded" type="button" class="secondary">Download encoded PNG</button>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="section-title"><span>02</span><h2>Decrypt</h2></div>
+        <p class="muted">Upload the encoded PNG. Its embedded key is used automatically to recover the exact original bytes.</p>
+        <form id="decrypt-form">
+          <label class="upload">
+            <span>Encoded public image</span>
+            <input id="encoded-image" name="encoded_image" type="file" accept="image/png" required>
+            <strong>Choose an encoded PNG</strong>
+            <small id="encoded-info">No file selected</small>
+          </label>
+          <button type="submit" class="primary">Decrypt image</button>
+        </form>
+        <div id="decrypt-result" class="result hidden">
+          <h3>Recovered private image</h3>
+          <img id="recovered-preview" alt="Recovered private image preview">
+          <p id="decrypt-details"></p>
+          <button id="download-recovered" type="button" class="secondary">Download recovered image</button>
+        </div>
+      </section>
+    </div>
+    <footer>All processing happens locally in this Flask application. No files are uploaded to a third party.</footer>
+  </main>
+  <script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>

@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Image encryption app</title>
+    <link rel="stylesheet" href="index.css">
+</head>
+<body>
+    <div class="container">
+       <canvas aria-label="Encrypted image preview"></canvas>
+    </div>
+    <div class="input-container">
+        <label for="target">Private image</label>
+        <input type="file" id="target" accept="image/*">
+    </div>
+    <div class="input-container">
+        <label for="encryption">public image</label>
+        <input type="file" id="encryption" accept="image/*">
+    </div>
+    <button type="button" disabled>Download PNG</button>
+    <p id="status" role="status" aria-live="polite"></p>
+    <script src="index encryption.js" type="text/javascript"></script>
+</body>
+</html>
